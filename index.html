@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebView Idle Test</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1c1c1e; --muted: #6b6b70; --line: #e2e2e6; --card: #f6f6f8; --accent: #2457d6; --bad: #c62828; --good: #2e7d32; --warn: #a15c00; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #121214; --fg: #ededf0; --muted: #a0a0a8; --line: #2c2c31; --card: #1c1c20; --accent: #7aa2ff; --bad: #ff7b72; --good: #6fd17a; --warn: #f0b45a; } }
+  :root[data-theme="dark"] { --bg: #121214; --fg: #ededf0; --muted: #a0a0a8; --line: #2c2c31; --card: #1c1c20; --accent: #7aa2ff; --bad: #ff7b72; --good: #6fd17a; --warn: #f0b45a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 6px; }
+  ol, ul { margin: 6px 0; padding-left: 20px; }
+  code { font: 12px ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 16px; width: 100%; background: var(--accent); color: #fff; font-weight: 600; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); margin-top: 8px; }
+  button:disabled { opacity: .5; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .verdict { font-size: 17px; font-weight: 700; margin: 0 0 6px; }
+  .bad { color: var(--bad); } .good { color: var(--good); } .warn { color: var(--warn); }
+  .hidden { display: none; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, Menlo, Consolas, monospace; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WebView idle 작업 테스트</h1>
+  <p class="sub">Android WebView 147 이상에서 화면이 멈춰 있을 때 <code>requestIdleCallback</code>과 <code>canvas.toBlob</code>이 늦어지거나 실행되지 않는 현상을 확인합니다.<br>Checks whether idle tasks starve in Android WebView 147+ while the page is static.</p>
+
+  <section class="card">
+    <h2>이 기기</h2>
+    <table>
+      <tr><th>엔진</th><td id="engine"></td></tr>
+      <tr><th>버전</th><td id="version"></td></tr>
+    </table>
+    <p id="engineNote" class="sub" style="margin:8px 0 0"></p>
+  </section>
+
+  <section class="card" id="howto">
+    <h2>테스트 방법</h2>
+    <ol>
+      <li>카카오톡, 네이버, 인스타그램 같은 <b>앱 안에서</b> 이 링크를 엽니다. (Chrome 앱에서 열면 비교용 정상값이 나옵니다.)</li>
+      <li>화면 자동 꺼짐 시간을 <b>2분 이상</b>으로 둡니다.</li>
+      <li><b>시작</b>을 누른 뒤 휴대폰을 내려놓고 <b>최대 2분간 화면을 건드리지 않습니다.</b> 측정 중에는 일부러 화면이 바뀌지 않습니다.</li>
+    </ol>
+    <button id="start">시작</button>
+  </section>
+
+  <section class="card hidden" id="running">
+    <p class="verdict">측정 중입니다. 화면을 건드리지 마세요.</p>
+    <p class="sub" style="margin:0">최대 약 2분 걸립니다. 화면이 바뀌면 결과에 영향을 주기 때문에 진행 표시를 하지 않습니다. 끝나면 결과가 나타납니다.</p>
+  </section>
+
+  <section class="card hidden" id="result">
+    <p class="verdict" id="verdict"></p>
+    <p class="sub" id="verdictNote" style="margin:0 0 10px"></p>
+    <table id="rows"></table>
+  </section>
+
+  <section class="card hidden" id="touch">
+    <h2>추가 확인: 터치하면 풀리는가</h2>
+    <p class="sub" id="touchText" style="margin:0"></p>
+  </section>
+
+  <section class="card hidden" id="share">
+    <h2>결과 공유</h2>
+    <p class="sub" style="margin:0">아래 내용을 복사해 버그 보고나 메시지에 붙여 넣으세요.</p>
+    <pre id="report"></pre>
+    <button class="secondary" id="copy">결과 복사</button>
+    <button class="secondary" id="again">다시 측정</button>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ua = navigator.userAgent;
+  const chrome = (ua.match(/Chrome\/([\d.]+)/) || [])[1] || '알 수 없음';
+  const major = parseInt(chrome, 10);
+  const isWebView = /; wv\)/.test(ua) || /Version\/[\d.]+ Chrome/.test(ua);
+  $('engine').textContent = isWebView ? 'Android WebView' : (/Android/.test(ua) ? 'Chrome 등 브라우저' : '브라우저 (Android 아님)');
+  $('version').textContent = chrome;
+  $('engineNote').textContent = isWebView
+    ? (major >= 147 ? '영향 범위(WebView 147 이상)에 해당하는 버전입니다.' : 'WebView 146 이하라 정상으로 나와야 합니다.')
+    : '앱 안의 WebView가 아니어서 정상값이 나와야 합니다. 비교용으로 쓰세요.';
+
+  const now = () => performance.now();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const capped = (promise, ms) => Promise.race([promise, wait(ms).then(() => 'CAP')]);
+  const CAP_SINGLE = 30000, CAP_CHAIN = 45000, CAP_BLOB = 15000;
+  let hiddenDuringTest = false;
+  document.addEventListener('visibilitychange', () => { if (document.hidden) hiddenDuringTest = true; });
+
+  async function run() {
+    hiddenDuringTest = false;
+    const r = { ua, chrome, isWebView, startedAt: new Date().toISOString() };
+    // Let the frames from the button press finish so the page is truly static.
+    await wait(2000);
+
+    // 1. requestIdleCallback with a 1s timeout: did idle time ever arrive?
+    r.ricTimeout = [];
+    for (let i = 0; i < 3; i++) {
+      const a = now();
+      const didTimeout = await new Promise((res) => requestIdleCallback((d) => res(d.didTimeout), { timeout: 1000 }));
+      r.ricTimeout.push({ ms: Math.round(now() - a), didTimeout });
+    }
+
+    // 2. requestIdleCallback without timeout: does it run at all?
+    let singleFired = null; const a1 = now();
+    requestIdleCallback(() => { singleFired = now(); });
+    await capped(new Promise((res) => { const p = () => singleFired ? res() : setTimeout(p, 50); p(); }), CAP_SINGLE);
+    r.ricSingleMs = singleFired ? Math.round(singleFired - a1) : null;
+
+    // 3. A queue of 20 small jobs, each scheduled in the next idle callback (common "work when idle" pattern).
+    let jobs = 0; const a2 = now(); let chainDone = null;
+    const step = () => { jobs += 1; if (jobs === 20) chainDone = now(); else requestIdleCallback(step); };
+    requestIdleCallback(step);
+    await capped(new Promise((res) => { const p = () => chainDone ? res() : setTimeout(p, 50); p(); }), CAP_CHAIN);
+    r.chain = { jobs, ms: chainDone ? Math.round(chainDone - a2) : null };
+
+    // 4. canvas.toBlob x3 (Chromium encodes JPEG/WebP in idle tasks).
+    const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 1365;
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#888'; ctx.fillRect(0, 0, 64, 64);
+    r.toBlob = [];
+    for (let i = 0; i < 3; i++) {
+      const a = now();
+      const out = await capped(new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.8)), CAP_BLOB);
+      r.toBlob.push(out === 'CAP' ? null : Math.round(now() - a));
+    }
+    r.hiddenDuringTest = hiddenDuringTest;
+
+    // Leave one idle callback pending (if the single one starved) to see what releases it.
+    r.pendingForTouch = !singleFired;
+    return r;
+  }
+
+  function judge(r) {
+    const ricStarved = r.ricSingleMs === null;
+    const chainStuck = r.chain.jobs < 20;
+    const allTimedOut = r.ricTimeout.every((x) => x.didTimeout);
+    const blobs = r.toBlob.filter((x) => x !== null);
+    const blobSlow = r.toBlob.some((x) => x === null) || (blobs.length && blobs.reduce((s, x) => s + x, 0) / blobs.length > 1000);
+    const problem = ricStarved || chainStuck || allTimedOut || blobSlow;
+    return { ricStarved, chainStuck, allTimedOut, blobSlow, problem };
+  }
+
+  const fmt = (ms) => ms === null ? '실행 안 됨' : (ms >= 1000 ? (ms / 1000).toFixed(1) + '초' : ms + 'ms');
+
+  function show(r) {
+    const j = judge(r);
+    $('running').classList.add('hidden');
+    $('result').classList.remove('hidden');
+    $('share').classList.remove('hidden');
+    const v = $('verdict');
+    if (r.hiddenDuringTest) {
+      v.textContent = '측정 무효: 중간에 화면이 꺼졌거나 다른 앱으로 이동했습니다.'; v.className = 'verdict warn';
+      $('verdictNote').textContent = '화면 자동 꺼짐 시간을 늘리고 다시 측정해 주세요.';
+    } else if (j.problem) {
+      v.textContent = '문제 재현됨: 화면이 멈춘 동안 idle 작업이 실행되지 않았습니다.'; v.className = 'verdict bad';
+      $('verdictNote').textContent = '정상 환경(Chrome 앱, WebView 146 이하)에서는 아래 값이 모두 수십 ms 안에 끝납니다.';
+    } else {
+      v.textContent = '이번 측정에서는 정상입니다.'; v.className = 'verdict good';
+      $('verdictNote').textContent = isWebView && major >= 147 ? '이 현상은 매번 나오지 않을 수 있습니다. 2~3번 다시 측정해 보세요.' : '';
+    }
+    const row = (name, value, bad) => `<tr><td>${name}</td><td class="num ${bad ? 'bad' : ''}">${value}</td></tr>`;
+    $('rows').innerHTML =
+      row('requestIdleCallback (timeout 1초) ×3', r.ricTimeout.map((x) => x.ms + 'ms' + (x.didTimeout ? ' ⏱' : '')).join(' / '), j.allTimedOut) +
+      row('requestIdleCallback (timeout 없음)', r.ricSingleMs === null ? `${CAP_SINGLE / 1000}초 동안 실행 안 됨` : fmt(r.ricSingleMs), j.ricStarved) +
+      row('idle 대기열 20개', r.chain.ms !== null ? `20개 / ${fmt(r.chain.ms)}` : `${CAP_CHAIN / 1000}초 동안 ${r.chain.jobs}개`, j.chainStuck) +
+      row('canvas.toBlob (JPEG) ×3', r.toBlob.map(fmt).join(' / '), j.blobSlow) +
+      `<tr><td colspan="2" class="sub">⏱ = 기다리다 timeout으로 실행됨 (idle 시간이 오지 않음)</td></tr>`;
+    r.verdict = r.hiddenDuringTest ? 'invalid' : (j.problem ? 'REPRODUCED' : 'normal');
+    renderReport(r);
+    if (r.pendingForTouch && !r.hiddenDuringTest) watchRelease(r);
+  }
+
+  function renderReport(r) {
+    const lines = [
+      `WebView idle test — ${r.verdict}`,
+      `UA: ${r.ua}`,
+      `requestIdleCallback(timeout 1000) x3: ${r.ricTimeout.map((x) => x.ms + 'ms' + (x.didTimeout ? ' (didTimeout)' : '')).join(', ')}`,
+      `requestIdleCallback(no timeout): ${r.ricSingleMs === null ? `not run within ${CAP_SINGLE / 1000}s` : r.ricSingleMs + 'ms'}`,
+      `idle queue of 20 chained callbacks: ${r.chain.ms !== null ? `20 done in ${r.chain.ms}ms` : `${r.chain.jobs}/20 within ${CAP_CHAIN / 1000}s`}`,
+      `canvas.toBlob(jpeg) x3: ${r.toBlob.map((x) => x === null ? `>${CAP_BLOB / 1000}s` : x + 'ms').join(', ')}`,
+    ];
+    if (r.release) lines.push(`pending idle callback released: ${r.release}`);
+    $('report').textContent = lines.join('\n');
+  }
+
+  // Showing the result commits one frame; record whether that alone runs the starved callback, otherwise wait for a touch.
+  function watchRelease(r) {
+    let touchedAt = null, firedAt = null; const shownAt = now();
+    const box = $('touch'); box.classList.remove('hidden');
+    $('touchText').textContent = '아직 실행되지 않은 idle 작업이 하나 남아 있습니다. 화면을 한 번 가볍게 터치해 보세요. (결과 화면을 그리는 것만으로 풀릴 수도 있습니다.)';
+    const onTouch = () => { if (touchedAt === null) touchedAt = now(); };
+    addEventListener('pointerdown', onTouch, { once: true });
+    requestIdleCallback(() => {
+      firedAt = now();
+      if (touchedAt === null) {
+        r.release = `ran ${Math.round(firedAt - shownAt)}ms after the result was drawn, without a touch`;
+        $('touchText').textContent = `결과 화면을 그린 직후 ${fmt(Math.round(firedAt - shownAt))} 만에 실행됐습니다. 화면이 한 번 바뀌는 것만으로도 풀린다는 뜻입니다.`;
+      } else {
+        r.release = `ran ${Math.round(firedAt - touchedAt)}ms after a touch (${((touchedAt - shownAt) / 1000).toFixed(1)}s after the result was shown)`;
+        $('touchText').textContent = `터치 후 ${fmt(Math.round(firedAt - touchedAt))} 만에 실행됐습니다. 사용자가 건드려야 풀린다는 뜻입니다.`;
+      }
+      renderReport(r);
+    });
+  }
+
+  $('start').addEventListener('click', async () => {
+    $('howto').classList.add('hidden'); $('result').classList.add('hidden'); $('share').classList.add('hidden'); $('touch').classList.add('hidden');
+    $('running').classList.remove('hidden');
+    window.__result = null;
+    const r = await run();
+    window.__result = r;
+    show(r);
+  });
+  $('again').addEventListener('click', () => { $('howto').classList.remove('hidden'); $('result').classList.add('hidden'); $('share').classList.add('hidden'); $('touch').classList.add('hidden'); });
+  $('copy').addEventListener('click', async () => {
+    const text = $('report').textContent;
+    try { await navigator.clipboard.writeText(text); $('copy').textContent = '복사했습니다'; }
+    catch { const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select(); document.execCommand('copy'); t.remove(); $('copy').textContent = '복사했습니다'; }
+    setTimeout(() => { $('copy').textContent = '결과 복사'; }, 1500);
+  });
+})();
+</script>
+</body>
+</html>
