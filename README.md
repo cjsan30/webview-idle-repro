@@ -6,7 +6,7 @@ Since Android WebView 147 (still present in 156), idle tasks stop running while 
 `requestIdleCallback` callbacks without a `timeout` do not run until the user touches the screen, and `canvas.toBlob` waits for Chromium's idle fallback timeout (4 s on Android) on every call.
 Chrome on the same device and WebView 146 are not affected.
 
-The HTML spec does not guarantee when an idle callback runs, so this is not a spec violation by itself.
+The W3C requestIdleCallback spec does not guarantee when an idle callback runs, so this is not a spec violation by itself.
 It is a regression: on a completely idle page the same callbacks run within ~50 ms in WebView 146 and in Chrome 156.
 
 ## How to test
